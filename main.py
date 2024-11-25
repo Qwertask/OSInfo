@@ -3,15 +3,25 @@ from tkinter import ttk, messagebox
 import os
 import psutil
 import platform
-import socket
+import re
 import datetime
 import json
 import subprocess
 import pefile
-import lief
-import io
-import xml.etree.ElementTree as ET
+import locale
+import requests
+locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
+subprocess.run('chcp 65001', shell=True)
 
+
+
+def get_external_ip():
+    try:
+        response = requests.get('https://api.ipify.org', timeout=5)  # Устанавливаем таймаут для запроса
+        response.raise_for_status()  # Проверяем успешность запроса (код 200)
+        return response.text  # Возвращаем внешний IP-адрес
+    except requests.exceptions.RequestException:
+        return "N/A"  # Возвращаем "N/A" в случае ошибки
 
 def display_info():
     """Отображает собранную информацию в текстовом поле"""
@@ -57,9 +67,11 @@ def format_info(info):
         formatted_info += f"Hardware Info:\n  CPU Cores: {hardware['cpu']['cores']}\n"
         formatted_info += f"  RAM: {hardware['memory']['percent']}% used ({hardware['memory']['used'] / (1024 ** 3):.2f} GB / {hardware['memory']['total'] / (1024 ** 3):.2f} GB)\n"
         formatted_info += f"  Disk: {hardware['disk']['percent_used']}% used ({hardware['disk']['free'] / (1024 ** 3):.2f} GB free / {hardware['disk']['total'] / (1024 ** 3):.2f} GB total)\n"
+        formatted_info += "Network Info:\n"
         for net in hardware['network']:
-            formatted_info += f"  Network: {net['name']} ({net['type']}) - {net['address']}\n"
+            formatted_info += f"  Name: {net['name']}\n  Type: {net['type']}\n  Address: {net['address']}\n\n"
     return formatted_info
+
 
 
 def check_windows_av():
@@ -204,8 +216,95 @@ def get_os_update_status():
             updates_available = False
     return {"os_updates": updates_available}
 
+def get_active_network():
+    """Возвращает активные сетевые интерфейсы с типом подключения (проводной или беспроводной)."""
+    system = platform.system()
+    network_info = []
+
+    if system == "Windows":
+        try:
+            result = subprocess.check_output('netsh wlan show interfaces', shell=True, text=True, encoding="utf-8", errors="ignore")
+            ssid_match = re.search(r"SSID\s*:\s*(.+)", result)
+            state_match = re.search(r"State\s*:\s*(.+)", result)
+            if ssid_match and state_match and "connected" in state_match.group(1).lower():
+                network_info.append({
+                    'name': ssid_match.group(1),
+                    'address': get_external_ip(),
+                    'type': 'wireless'
+                })
+        except subprocess.CalledProcessError:
+            pass
+
+        try:
+            result = subprocess.check_output('ipconfig', shell=True, text=True, encoding="utf-8", errors="ignore")
+            ip_match = re.search(r"IPv4 Address[ .]*: (\d+\.\d+\.\d+\.\d+)", result)
+            if "Ethernet adapter" in result and ip_match:
+                network_info.append({
+                    'name': 'Ethernet',
+                    'address': ip_match.group(1),
+                    'type': 'wired'
+                })
+        except subprocess.CalledProcessError:
+            pass
+
+    elif system == "Linux":
+        try:
+            result = subprocess.check_output(['iwconfig'], text=True, stderr=subprocess.DEVNULL)
+            if 'no wireless extensions' not in result:
+                ip_result = subprocess.check_output(['ip', 'addr'], text=True)
+                ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
+                network_info.append({
+                    'name': 'Wi-Fi',
+                    'address': ip_match.group(1) if ip_match else "N/A",
+                    'type': 'wireless'
+                })
+        except FileNotFoundError:
+            pass
+
+        try:
+            result = subprocess.check_output(['ip', 'link'], text=True)
+            ip_result = subprocess.check_output(['ip', 'addr'], text=True)
+            ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
+            if "UP" in result:
+                network_info.append({
+                    'name': 'Ethernet',
+                    'address': ip_match.group(1) if ip_match else "N/A",
+                    'type': 'wired'
+                })
+        except subprocess.CalledProcessError:
+            pass
+
+    elif system == "Darwin":
+        try:
+            result = subprocess.check_output(['networksetup', '-listallhardwareports'], text=True)
+            if "Wi-Fi" in result:
+                ip_result = subprocess.check_output(['ifconfig'], text=True)
+                ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
+                network_info.append({
+                    'name': 'Wi-Fi',
+                    'address': ip_match.group(1) if ip_match else "N/A",
+                    'type': 'wireless'
+                })
+        except FileNotFoundError:
+            pass
+
+        try:
+            result = subprocess.check_output(['ifconfig'], text=True)
+            ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", result)
+            if "en0" in result and "status: active" in result:
+                network_info.append({
+                    'name': 'Ethernet',
+                    'address': ip_match.group(1) if ip_match else "N/A",
+                    'type': 'wired'
+                })
+        except subprocess.CalledProcessError:
+            pass
+
+    return network_info if network_info else [{"name": "No Network", "address": "N/A", "type": "N/A"}]
+
 
 def get_hardware_info():
+    """Собирает полную информацию о системе."""
     cpu_info = {
         "cores": psutil.cpu_count(logical=False),
     }
@@ -221,20 +320,15 @@ def get_hardware_info():
         "free": disk.free,
         "percent_used": disk.percent
     }
-    network_info = []
-    for interface, addrs in psutil.net_if_addrs().items():
-        for addr in addrs:
-            if addr.family == socket.AF_INET:
-                network_info.append({
-                    "name": interface,
-                    "address": addr.address,
-                    "type": "wireless" if 'wifi' in interface.lower() else "wired"
-                })
+
+    # Получаем информацию о текущей активной сети
+    active_network = get_active_network()
+
     return {
         "cpu": cpu_info,
         "memory": memory_info,
         "disk": disk_info,
-        "network": network_info
+        "network": active_network
     }
 
 
@@ -275,32 +369,46 @@ def show_history():
     for entry in history_data:
         history_text.insert(tk.END, json.dumps(entry, indent=4, ensure_ascii=False) + "\n" + "-" * 70 + "\n")
 
-
 def format_info_as_table(info):
     formatted_info = "Информация о системе:\n\n"
+
+    # Антивирус
     if "antivirus" in info:
         formatted_info += "Антивирус:\n"
         formatted_info += f"{'Установлен':<20}{'Включен':<20}{'Сигнатуры обновлены':<20}\n"
         formatted_info += f"{'Да' if info['antivirus']['installed'] else 'Нет':<20}"
         formatted_info += f"{'Да' if info['antivirus']['enabled'] else 'Нет':<20}"
         formatted_info += f"{'Да' if info['antivirus']['signatures_updated'] else 'Нет':<20}\n\n"
+
+    # Файрвол
     if "firewall" in info:
         formatted_info += f"Файрвол:\n{'Включен':<20}{'Да' if info['firewall']['enabled'] else 'Нет':<20}\n\n"
+
+    # Шифрование диска
     if "disk_encryption" in info:
         formatted_info += f"Шифрование диска:\n{'Да' if info['disk_encryption']['disk_encryption'] else 'Нет'}\n\n"
+
+    # Обновления ОС
     if "os_updates" in info:
         formatted_info += f"Обновления ОС:\n{'Актуально' if info['os_updates']['os_updates'] else 'Не актуально'}\n\n"
+
+    # Железо
     if "hardware" in info:
         formatted_info += "Железо:\n"
         hardware = info["hardware"]
         formatted_info += f"{'CPU (ядра)':<20}{hardware['cpu']['cores']}\n"
         formatted_info += f"{'RAM (используется)':<20}{hardware['memory']['percent']}%\n"
         formatted_info += f"{'Диск (используется)':<20}{hardware['disk']['percent_used']}%\n\n"
-        formatted_info += "Сети:\n"
-        for net in hardware['network']:
-            formatted_info += f"{net['name']:<20}{net['type']:<20}{net['address']:<20}\n"
-    return formatted_info
 
+        # Сети
+        formatted_info += "Сети:\n"
+        if isinstance(hardware['network'], list):
+            for net in hardware['network']:
+                formatted_info += f"{net['name']:<20}{net['type']:<20}{net['address']:<20}\n"
+        else:
+            # Если сеть не в виде списка (например, один активный интерфейс)
+            formatted_info += f"{hardware['network']:<20} {'wireless' if 'wireless' in hardware['network'] else 'wired'}\n"
+    return formatted_info
 
 
 def search_file_button_action():
@@ -415,5 +523,5 @@ ttk.Button(frame, text="История", command=show_history).grid(row=9, colum
 
 app.mainloop()
 
-#to do: Wi-Fi/wireless adapter
+#to do: file search
 #to do: antivirus version
