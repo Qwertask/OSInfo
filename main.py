@@ -1,27 +1,21 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
-import psutil
 import platform
-import re
 import datetime
 import json
 import subprocess
 import pefile
 import locale
-import requests
+from main.antivirus import get_av_status
+from main.disk_encryption import get_disk_encryption_status
+from main.firewall import get_fw_status
+from main.hardware import get_hardware_info
+from main.os_update import get_os_update_status
+
 locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
 subprocess.run('chcp 65001', shell=True)
 
-
-
-def get_external_ip():
-    try:
-        response = requests.get('https://api.ipify.org', timeout=5)  # Устанавливаем таймаут для запроса
-        response.raise_for_status()  # Проверяем успешность запроса (код 200)
-        return response.text  # Возвращаем внешний IP-адрес
-    except requests.exceptions.RequestException:
-        return "N/A"  # Возвращаем "N/A" в случае ошибки
 
 def display_info():
     """Отображает собранную информацию в текстовом поле"""
@@ -71,265 +65,6 @@ def format_info(info):
         for net in hardware['network']:
             formatted_info += f"  Name: {net['name']}\n  Type: {net['type']}\n  Address: {net['address']}\n\n"
     return formatted_info
-
-
-
-def check_windows_av():
-    av_status = {
-        "installed": False,
-        "enabled": False,
-        "signatures_updated": False
-    }
-
-    try:
-        output = subprocess.check_output("powershell Get-MpComputerStatus", shell=True)
-        if "AMServiceEnabled                 : True" in output.decode():
-            av_status["installed"] = True
-            av_status["enabled"] = True
-        if "AntivirusSignatureVersion" in output.decode():
-            av_status["signatures_updated"] = True
-    except subprocess.CalledProcessError:
-        pass
-
-    return av_status
-
-
-def check_macos_av():
-    av_status = {
-        "installed": False,
-        "enabled": False,
-        "signatures_updated": False
-    }
-
-    try:
-        output = subprocess.check_output("/usr/bin/sweep -v", shell=True)
-        if "Sophos" in output.decode():
-            av_status["installed"] = True
-            av_status["enabled"] = True
-        if "Updated" in output.decode():
-            av_status["signatures_updated"] = True
-    except subprocess.CalledProcessError:
-        pass
-
-    return av_status
-
-
-def check_linux_av():
-    av_status = {
-        "installed": False,
-        "enabled": False,
-        "signatures_updated": False
-    }
-
-    try:
-        output = subprocess.check_output("clamdscan --version", shell=True)
-        if "ClamAV" in output.decode():
-            av_status["installed"] = True
-            av_status["enabled"] = True
-        try:
-            sig_output = subprocess.check_output("freshclam -v", shell=True)
-            if "daily.cld" in sig_output.decode():
-                av_status["signatures_updated"] = True
-        except subprocess.CalledProcessError:
-            pass
-    except subprocess.CalledProcessError:
-        pass
-
-    return av_status
-
-
-def get_av_status():
-    current_platform = platform.system()
-    if current_platform == "Windows":
-        return check_windows_av()
-    elif current_platform == "Darwin":
-        return check_macos_av()
-    elif current_platform == "Linux":
-        return check_linux_av()
-    else:
-        return {
-            "installed": False,
-            "enabled": False,
-            "signatures_updated": False
-        }
-
-
-def get_fw_status():
-    current_platform = platform.system()
-    if current_platform == "Windows":
-        fw_enabled = os.system("netsh advfirewall show allprofiles state") == 0
-    elif current_platform == "Linux":
-        fw_enabled = os.system("ufw status | grep -i active") == 0
-    elif current_platform == "Darwin":
-        fw_enabled = os.system("sudo pfctl -sr > /dev/null 2>&1") == 0
-    else:
-        fw_enabled = False
-    return {"enabled": fw_enabled}
-
-
-def get_disk_encryption_status():
-    current_platform = platform.system()
-    encryption_status = False
-
-    if current_platform == "Windows":
-        try:
-            output = subprocess.check_output("manage-bde -status", shell=True)
-            encryption_status = "Fully Encrypted" in output.decode()
-        except subprocess.CalledProcessError:
-            encryption_status = False
-    elif current_platform == "Darwin":
-        try:
-            output = subprocess.check_output("fdesetup status", shell=True, encoding='utf-8')
-            encryption_status = "FileVault is On" in output
-        except subprocess.CalledProcessError:
-            encryption_status = False
-    elif current_platform == "Linux":
-        try:
-            output = subprocess.check_output("lsblk -o TYPE", shell=True, encoding='utf-8')
-            encryption_status = "crypt" in output
-        except subprocess.CalledProcessError:
-            encryption_status = False
-    return {"disk_encryption": encryption_status}
-
-
-def get_os_update_status():
-    current_platform = platform.system()
-    updates_available = False
-
-    if current_platform == "Windows":
-        try:
-            output = subprocess.check_output("wmic qfe list brief /format:table", shell=True, encoding='cp1252')
-            updates_available = len(output.strip().split('\n')) > 1
-        except subprocess.CalledProcessError:
-            updates_available = False
-    elif current_platform == "Linux":
-        try:
-            output = subprocess.check_output("apt list --upgradable", shell=True, encoding='utf-8')
-            updates_available = "upgradable" in output
-        except subprocess.CalledProcessError:
-            updates_available = False
-    elif current_platform == "Darwin":
-        try:
-            output = subprocess.check_output("softwareupdate -l", shell=True, encoding='utf-8')
-            updates_available = "Software Update found the following new or updated software" in output
-        except subprocess.CalledProcessError:
-            updates_available = False
-    return {"os_updates": updates_available}
-
-def get_active_network():
-    """Возвращает активные сетевые интерфейсы с типом подключения (проводной или беспроводной)."""
-    system = platform.system()
-    network_info = []
-
-    if system == "Windows":
-        try:
-            result = subprocess.check_output('netsh wlan show interfaces', shell=True, text=True, encoding="utf-8", errors="ignore")
-            ssid_match = re.search(r"SSID\s*:\s*(.+)", result)
-            state_match = re.search(r"State\s*:\s*(.+)", result)
-            if ssid_match and state_match and "connected" in state_match.group(1).lower():
-                network_info.append({
-                    'name': ssid_match.group(1),
-                    'address': get_external_ip(),
-                    'type': 'wireless'
-                })
-        except subprocess.CalledProcessError:
-            pass
-
-        try:
-            result = subprocess.check_output('ipconfig', shell=True, text=True, encoding="utf-8", errors="ignore")
-            ip_match = re.search(r"IPv4 Address[ .]*: (\d+\.\d+\.\d+\.\d+)", result)
-            if "Ethernet adapter" in result and ip_match:
-                network_info.append({
-                    'name': 'Ethernet',
-                    'address': ip_match.group(1),
-                    'type': 'wired'
-                })
-        except subprocess.CalledProcessError:
-            pass
-
-    elif system == "Linux":
-        try:
-            result = subprocess.check_output(['iwconfig'], text=True, stderr=subprocess.DEVNULL)
-            if 'no wireless extensions' not in result:
-                ip_result = subprocess.check_output(['ip', 'addr'], text=True)
-                ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
-                network_info.append({
-                    'name': 'Wi-Fi',
-                    'address': ip_match.group(1) if ip_match else "N/A",
-                    'type': 'wireless'
-                })
-        except FileNotFoundError:
-            pass
-
-        try:
-            result = subprocess.check_output(['ip', 'link'], text=True)
-            ip_result = subprocess.check_output(['ip', 'addr'], text=True)
-            ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
-            if "UP" in result:
-                network_info.append({
-                    'name': 'Ethernet',
-                    'address': ip_match.group(1) if ip_match else "N/A",
-                    'type': 'wired'
-                })
-        except subprocess.CalledProcessError:
-            pass
-
-    elif system == "Darwin":
-        try:
-            result = subprocess.check_output(['networksetup', '-listallhardwareports'], text=True)
-            if "Wi-Fi" in result:
-                ip_result = subprocess.check_output(['ifconfig'], text=True)
-                ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", ip_result)
-                network_info.append({
-                    'name': 'Wi-Fi',
-                    'address': ip_match.group(1) if ip_match else "N/A",
-                    'type': 'wireless'
-                })
-        except FileNotFoundError:
-            pass
-
-        try:
-            result = subprocess.check_output(['ifconfig'], text=True)
-            ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", result)
-            if "en0" in result and "status: active" in result:
-                network_info.append({
-                    'name': 'Ethernet',
-                    'address': ip_match.group(1) if ip_match else "N/A",
-                    'type': 'wired'
-                })
-        except subprocess.CalledProcessError:
-            pass
-
-    return network_info if network_info else [{"name": "No Network", "address": "N/A", "type": "N/A"}]
-
-
-def get_hardware_info():
-    """Собирает полную информацию о системе."""
-    cpu_info = {
-        "cores": psutil.cpu_count(logical=False),
-    }
-    memory = psutil.virtual_memory()
-    memory_info = {
-        "total": memory.total,
-        "used": memory.used,
-        "percent": memory.percent
-    }
-    disk = psutil.disk_usage('/')
-    disk_info = {
-        "total": disk.total,
-        "free": disk.free,
-        "percent_used": disk.percent
-    }
-
-    # Получаем информацию о текущей активной сети
-    active_network = get_active_network()
-
-    return {
-        "cpu": cpu_info,
-        "memory": memory_info,
-        "disk": disk_info,
-        "network": active_network
-    }
 
 
 def collect_system_info(checks, file_search=None):
@@ -410,7 +145,6 @@ def format_info_as_table(info):
             formatted_info += f"{hardware['network']:<20} {'wireless' if 'wireless' in hardware['network'] else 'wired'}\n"
     return formatted_info
 
-
 def search_file_button_action():
     """Обработка нажатия кнопки 'Поиск'. Выполняет поиск файла по имени и выводит версию, если доступна."""
     file_name = file_name_entry.get()
@@ -423,40 +157,50 @@ def search_file_button_action():
             messagebox.showwarning("Ошибка", error_message["error"])
         return
 
-    possible_extensions = [".exe", ""] if platform.system() == "Windows" else ["", ".sh", ".bin"]
-
     def extended_file_search(name):
-        paths = os.environ["PATH"].split(os.pathsep)
-        for path in paths:
-            for ext in possible_extensions:
-                full_path = os.path.join(path, name + ext)
-                if os.path.isfile(full_path):
-                    version = get_file_version(full_path)
-                    return {"found": True, "path": full_path, "version": version or "Не указана"}
-        return {"found": False}
+        """Ищет файл по всему диску, начиная с корневого каталога."""
 
-    def get_file_version(file_path):
-        if platform.system() == "Windows":
-            return get_windows_product_version(file_path)
-        else:
-            return None  # Для Linux/Unix можно дополнительно реализовать аналогичный функционал
+        def get_file_version(file_path):
+            """Получает версию файла."""
+            try:
+                pe = pefile.PE(file_path)
 
-    def get_windows_product_version(file_path):
-        try:
-            pe = pefile.PE(file_path)
+                # Извлечение VS_VERSION_INFO
+                if hasattr(pe, 'VS_VERSIONINFO') and pe.VS_VERSIONINFO:
+                    for file_info in pe.FileInfo:
+                        if isinstance(file_info, list):
+                            for entry in file_info:
+                                if entry.Key == b'StringFileInfo':
+                                    for string_table in entry.StringTable:
+                                        if b'ProductVersion' in string_table.entries:
+                                            return string_table.entries[b'ProductVersion'].decode()
 
-            # Извлечение VS_VERSION_INFO
-            if hasattr(pe, 'VS_VERSIONINFO') and pe.VS_VERSIONINFO:
-                for file_info in pe.FileInfo:
-                    if isinstance(file_info, list):
-                        for entry in file_info:
-                            if entry.Key == b'StringFileInfo':
-                                for string_table in entry.StringTable:
-                                    if b'ProductVersion' in string_table.entries:
-                                        return string_table.entries[b'ProductVersion'].decode()
-
-        except Exception:
+            except Exception:
+                return None
+        def search_in_directory(directory):
+            """Рекурсивно ищет файл в указанной директории."""
+            try:
+                for root, _, files in os.walk(directory):
+                    if name in files:
+                        full_path = os.path.join(root, name)
+                        version = get_file_version(full_path)
+                        return {"found": True, "path": full_path, "version": version or "Не указана"}
+            except Exception as e:
+                print(f"Ошибка доступа к директории {directory}: {e}")
             return None
+
+        def run_search():
+            """Запускает поиск по всем доступным дискам."""
+            drives = [f"{chr(drive)}:\\" for drive in range(65, 91) if
+                      os.path.exists(f"{chr(drive)}:\\")] if platform.system() == "Windows" else ["/"]
+            for drive in drives:
+                result = search_in_directory(drive)
+                if result:
+                    return result
+            return {"found": False}
+
+        return run_search()
+
 
     try:
         file_search_result = extended_file_search(file_name)
@@ -523,5 +267,3 @@ ttk.Button(frame, text="История", command=show_history).grid(row=9, colum
 
 app.mainloop()
 
-#to do: file search
-#to do: antivirus version
