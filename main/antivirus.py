@@ -14,10 +14,13 @@ def check_windows_av():
         if "AMServiceEnabled                 : True" in output.decode():
             av_status["installed"] = True
             av_status["enabled"] = True
+        if "AMServiceEnabled                 : False" in output.decode():
+            av_status["installed"] = True
+            av_status["enabled"] = False
         if "ProductStatus                    : 524288" in output.decode():
             av_status["signatures_updated"] = True
         if "ProductStatus                    : 1" in output.decode():
-            av_status["signatures_updated"] = True
+            av_status["signatures_updated"] = False
 
     except subprocess.CalledProcessError:
         pass

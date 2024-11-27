@@ -1,5 +1,10 @@
+import datetime
 import platform
+import socket
 import subprocess
+
+import psutil
+
 
 #multiplatform
 def get_os_update_status():
@@ -24,4 +29,8 @@ def get_os_update_status():
             updates_available = "Software Update found the following new or updated software" in output
         except subprocess.CalledProcessError:
             updates_available = False
-    return {"os_updates": updates_available}
+    return {"os": get_os_info(), "os_updates": updates_available}
+
+def get_os_info():
+    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time()).isoformat()
+    return { "os": platform.system(), "os_version": platform.version(), "hostname": socket.gethostname(), "uptime": boot_time }

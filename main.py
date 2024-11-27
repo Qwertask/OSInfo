@@ -1,19 +1,21 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
-import os
-import platform
 import datetime
 import json
+import os
+import platform
 import subprocess
+import tkinter as tk
+from tkinter import ttk, messagebox
+
 import pefile
-import locale
+
+
 from main.antivirus import get_av_status
 from main.disk_encryption import get_disk_encryption_status
 from main.firewall import get_fw_status
 from main.hardware import get_hardware_info
 from main.os_update import get_os_update_status
 
-locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
+#locale.setlocale(locale.LC_ALL, 'ru_RU.UTF-8')
 subprocess.run('chcp 65001', shell=True)
 
 
@@ -44,27 +46,77 @@ def display_info():
 
 
 def format_info(info):
-    """Форматирует информацию для вывода в текстовом формате"""
+    """Форматирует информацию для вывода в текстовом табличном формате"""
     formatted_info = f"Timestamp: {info['timestamp']}\n\n"
+
     if "antivirus" in info:
-        formatted_info += f"Antivirus:\n  Installed: {'Yes' if info['antivirus']['installed'] else 'No'}\n"
+        formatted_info += "Antivirus:\n"
+        formatted_info += f"  Installed: {'Yes' if info['antivirus']['installed'] else 'No'}\n"
         formatted_info += f"  Enabled: {'Yes' if info['antivirus']['enabled'] else 'No'}\n"
         formatted_info += f"  Signatures Updated: {'Yes' if info['antivirus']['signatures_updated'] else 'No'}\n\n"
+
     if "firewall" in info:
-        formatted_info += f"Firewall:\n  Enabled: {'Yes' if info['firewall']['enabled'] else 'No'}\n\n"
+        formatted_info += "Firewall:\n"
+        formatted_info += f"  Enabled: {'Yes' if info['firewall']['enabled'] else 'No'}\n\n"
+
     if "disk_encryption" in info:
-        formatted_info += f"Disk Encryption: {'Yes' if info['disk_encryption']['disk_encryption'] else 'No'}\n\n"
+        formatted_info += "Disk Encryption:\n"
+        formatted_info += f"  Enabled: {'Yes' if info['disk_encryption']['disk_encryption'] else 'No'}\n\n"
+
     if "os_updates" in info:
-        formatted_info += f"OS Updates: {'Up to Date' if info['os_updates']['os_updates'] else 'Not Up to Date'}\n\n"
+        os_info = info.get('os_updates', {}).get('os', {})
+        formatted_info += "OS Updates:\n"
+        formatted_info += f"  OS: {os_info.get('os', 'Unknown')}\n"
+        formatted_info += f"  OS Version: {os_info.get('os_version', 'Unknown')}\n"
+        formatted_info += f"  Hostname: {os_info.get('hostname', 'Unknown')}\n"
+        formatted_info += f"  Uptime: {os_info.get('uptime', 'Unknown')}\n"
+        formatted_info += f"  Status: {'Up to Date' if info.get('os_updates', {}).get('os_updates', False) else 'Not Up to Date'}\n\n"
+
     if "hardware" in info:
         hardware = info['hardware']
-        formatted_info += f"Hardware Info:\n  CPU Cores: {hardware['cpu']['cores']}\n"
-        formatted_info += f"  RAM: {hardware['memory']['percent']}% used ({hardware['memory']['used'] / (1024 ** 3):.2f} GB / {hardware['memory']['total'] / (1024 ** 3):.2f} GB)\n"
-        formatted_info += f"  Disk: {hardware['disk']['percent_used']}% used ({hardware['disk']['free'] / (1024 ** 3):.2f} GB free / {hardware['disk']['total'] / (1024 ** 3):.2f} GB total)\n"
-        formatted_info += "Network Info:\n"
-        for net in hardware['network']:
-            formatted_info += f"  Name: {net['name']}\n  Type: {net['type']}\n  Address: {net['address']}\n\n"
+        formatted_info += "Hardware Info:\n"
+
+        # CPU Information
+        cpu_info = hardware.get('cpu', {})
+        formatted_info += "  CPU:\n"
+        formatted_info += f"    Name: {cpu_info.get('name', 'Unknown')}\n"
+        formatted_info += f"    Cores: {cpu_info.get('cores', 'Unknown')}\n"
+        formatted_info += "    Usage per Core:\n"
+        for i, usage in enumerate(cpu_info.get('usage_per_core', [])):
+            formatted_info += f"      Core {i + 1}: {usage}%\n"
+        formatted_info += "\n"
+
+        # Memory Information
+        memory_info = hardware.get('memory', {})
+        formatted_info += "  Memory:\n"
+        formatted_info += f"    Total: {memory_info.get('total', 0) / (1024 ** 3):.2f} GB\n"
+        formatted_info += f"    Used: {memory_info.get('used', 0) / (1024 ** 3):.2f} GB\n"
+        formatted_info += f"    Percent Used: {memory_info.get('percent', 0)}%\n\n"
+
+        # Disk Information
+        disk_info = hardware.get('disk', {}).get('disk', [])
+        formatted_info += "  Disk:\n"
+        for disk in disk_info:
+            formatted_info += f"    Device: {disk.get('device', 'Unknown')}\n"
+            formatted_info += f"    Mountpoint: {disk.get('mountpoint', 'Unknown')}\n"
+            formatted_info += f"    Filesystem: {disk.get('fstype', 'Unknown')}\n"
+            formatted_info += f"    Total: {disk.get('total', 0) / (1024 ** 3):.2f} GB\n"
+            formatted_info += f"    Used: {disk.get('used', 0) / (1024 ** 3):.2f} GB\n"
+            formatted_info += f"    Free: {disk.get('free', 0) / (1024 ** 3):.2f} GB\n"
+            formatted_info += f"    Percent Used: {disk.get('percent_used', 0)}%\n"
+            formatted_info += "\n"
+
+        # Network Information
+        network_info = hardware.get('network', [])
+        formatted_info += "  Network:\n"
+        for net in network_info:
+            formatted_info += f"    Name: {net.get('name', 'Unknown')}\n"
+            formatted_info += f"    Address: {net.get('address', 'Unknown')}\n"
+            formatted_info += f"    Type: {net.get('type', 'Unknown')}\n"
+            formatted_info += "\n"
+
     return formatted_info
+
 
 
 def collect_system_info(checks, file_search=None):
@@ -259,11 +311,17 @@ ttk.Radiobutton(frame, text="Таблица", variable=display_format, value="Т
 
 # Поле для отображения результата
 result_text = tk.Text(frame, width=80, height=20)
-result_text.grid(row=8, column=0, columnspan=3, pady=(10, 0))
+result_text.grid(row=8, column=0, columnspan=4, pady=(10, 0))
+def copy_to_clipboard():
+    app.clipboard_clear()
+    app.clipboard_append(result_text.get(1.0, tk.END))
+    messagebox.showinfo("Скопировано", "Скопировано.")
 
 # Кнопки
 ttk.Button(frame, text="Показать информацию", command=lambda: display_info()).grid(row=9, column=0, pady=10)
 ttk.Button(frame, text="История", command=show_history).grid(row=9, column=1, pady=10)
+ttk.Button(frame, text="Скопировать", command=copy_to_clipboard).grid(row=9, column=3, pady=10)
+
 
 app.mainloop()
 

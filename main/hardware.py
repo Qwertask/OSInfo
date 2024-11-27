@@ -6,31 +6,25 @@ import requests
 
 #multipllatform
 def get_hardware_info():
-    """Собирает полную информацию о системе."""
     cpu_info = {
+        "name": platform.processor(),
         "cores": psutil.cpu_count(logical=False),
+        "usage_per_core": psutil.cpu_percent(interval=1, percpu=True)
     }
-    memory = psutil.virtual_memory()
     memory_info = {
-        "total": memory.total,
-        "used": memory.used,
-        "percent": memory.percent
+        "total": psutil.virtual_memory().total,
+        "used": psutil.virtual_memory().used,
+        "percent": psutil.virtual_memory().percent,
     }
-    disk = psutil.disk_usage('/')
     disk_info = {
-        "total": disk.total,
-        "free": disk.free,
-        "percent_used": disk.percent
+        "disk": get_disk_info()
     }
-
-    # Получаем информацию о текущей активной сети
-    active_network = get_active_network()
-
+    network_info = get_active_network()
     return {
         "cpu": cpu_info,
         "memory": memory_info,
         "disk": disk_info,
-        "network": active_network
+        "network": network_info
     }
 
 def get_active_network():
@@ -126,3 +120,12 @@ def get_external_ip():
         return response.text  # Возвращаем внешний IP-адрес
     except requests.exceptions.RequestException:
         return "N/A"  # Возвращаем "N/A" в случае ошибки
+
+
+def get_disk_info():
+    partitions = psutil.disk_partitions()
+    disks = []
+    for partition in partitions:
+        usage = psutil.disk_usage(partition.mountpoint)
+        disks.append({ "device": partition.device, "mountpoint": partition.mountpoint, "fstype": partition.fstype, "total": usage.total, "used": usage.used, "free": usage.free, "percent_used": usage.percent })
+        return disks

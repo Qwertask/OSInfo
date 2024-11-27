@@ -1,3 +1,4 @@
+import locale
 import platform
 import subprocess
 
@@ -5,7 +6,6 @@ import subprocess
 def get_disk_encryption_status():
     current_platform = platform.system()
     encryption_status = False
-
     if current_platform == "Windows":
         try:
             output = subprocess.check_output("manage-bde -status", shell=True)
